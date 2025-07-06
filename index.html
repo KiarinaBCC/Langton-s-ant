@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>拡張されたラングトンのアリ</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+            background: #000;
+            color: #fff;
+            overflow: hidden;
+        }
+        
+        #canvas {
+            display: block;
+            background: #000;
+            cursor: crosshair;
+        }
+        
+        .controls {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            display: flex;
+            gap: 10px;
+        }
+        
+        .btn {
+            padding: 10px 20px;
+            border: 1px solid #fff;
+            background: #000;
+            color: #fff;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        
+        .btn:hover {
+            background: #333;
+        }
+        
+        .info {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            font-size: 14px;
+            background: rgba(0,0,0,0.7);
+            padding: 10px;
+            border-radius: 5px;
+        }
+        
+
+        
+        .ant-list {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            font-size: 12px;
+            background: rgba(0,0,0,0.7);
+            padding: 10px;
+            border-radius: 5px;
+            max-height: 150px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    
+    <div class="controls">
+        <button class="btn" onclick="toggleSimulation()">実行</button>
+        <button class="btn" onclick="resetSimulation()">リセット</button>
+        <button class="btn" onclick="stepSimulation()">1ステップ</button>
+        <button class="btn" onclick="addAnt()">アリを追加</button>
+        <button class="btn" onclick="clearAnts()">アリをクリア</button>
+    </div>
+    
+    <div class="info">
+        <div>ステップ: <span id="step-count">0</span></div>
+        <div>アリの数: <span id="ant-count">1</span></div>
+        <div>マウスクリック・ドラッグで色変更</div>
+    </div>
+
+    
+    <div class="ant-list">
+        <div><strong>アリの位置:</strong></div>
+        <div id="ant-positions"></div>
+    </div>
+
+    <script>
+        class LangtonsAnt {
+            constructor(canvasId) {
+                this.canvas = document.getElementById(canvasId);
+                this.ctx = this.canvas.getContext('2d');
+                
+                this.resizeCanvas();
+                window.addEventListener('resize', () => this.resizeCanvas());
+                
+                this.cellSize = 2;
+                this.updateDimensions();
+                this.reset();
+                this.setupMouseEvents();
+                this.draw();
+            }
+            
+            resizeCanvas() {
+                this.canvas.width = window.innerWidth;
+                this.canvas.height = window.innerHeight;
+                this.updateDimensions();
+                if (this.width > 0 && this.height > 0) {
+                    this.reset();
+                    this.draw();
+                }
+            }
+            
+            updateDimensions() {
+                this.width = Math.floor(this.canvas.width / this.cellSize);
+                this.height = Math.floor(this.canvas.height / this.cellSize);
+            }
+            
+            setupMouseEvents() {
+                this.isDrawing = false;
+                this.lastDrawPos = null;
+                
+                this.canvas.addEventListener('mousedown', (e) => {
+                    this.isDrawing = true;
+                    this.handleCellToggle(e);
+                });
+                
+                this.canvas.addEventListener('mousemove', (e) => {
+                    if (this.isDrawing) {
+                        this.handleCellToggle(e);
+                    }
+                });
+                
+                this.canvas.addEventListener('mouseup', () => {
+                    this.isDrawing = false;
+                    this.lastDrawPos = null;
+                });
+                
+                this.canvas.addEventListener('mouseleave', () => {
+                    this.isDrawing = false;
+                    this.lastDrawPos = null;
+                });
+                
+                // タッチイベントも追加
+                this.canvas.addEventListener('touchstart', (e) => {
+                    e.preventDefault();
+                    this.isDrawing = true;
+                    this.handleCellToggle(e.touches[0]);
+                });
+                
+                this.canvas.addEventListener('touchmove', (e) => {
+                    e.preventDefault();
+                    if (this.isDrawing) {
+                        this.handleCellToggle(e.touches[0]);
+                    }
+                });
+                
+                this.canvas.addEventListener('touchend', (e) => {
+                    e.preventDefault();
+                    this.isDrawing = false;
+                    this.lastDrawPos = null;
+                });
+            }
+            
+            handleCellToggle(event) {
+                const rect = this.canvas.getBoundingClientRect();
+                const x = Math.floor((event.clientX - rect.left) / this.cellSize);
+                const y = Math.floor((event.clientY - rect.top) / this.cellSize);
+                
+                if (x >= 0 && x < this.width && y >= 0 && y < this.height) {
+                    // 連続した同じ位置の変更を避ける
+                    const posKey = `${x},${y}`;
+                    if (this.lastDrawPos !== posKey) {
+                        this.grid[y][x] = this.grid[y][x] === 0 ? 1 : 0;
+                        this.lastDrawPos = posKey;
+                        this.draw();
+                    }
+                }
+            }
+            
+            reset() {
+                if (this.width > 0 && this.height > 0) {
+                    this.grid = Array(this.height).fill().map(() => Array(this.width).fill(0));
+                    this.ants = [
+                        {
+                            x: Math.floor(this.width / 2),
+                            y: Math.floor(this.height / 2),
+                            direction: 0,
+                            color: '#ff0000',
+                            id: 0
+                        }
+                    ];
+                    this.steps = 0;
+                    this.isRunning = false;
+                    this.animationId = null;
+                    this.nextAntId = 1;
+                    
+                    this.updateInfo();
+                }
+            }
+            
+            addAnt() {
+                const colors = ['#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff'];
+                
+                const newAnt = {
+                    x: Math.floor(Math.random() * this.width),
+                    y: Math.floor(Math.random() * this.height),
+                    direction: Math.floor(Math.random() * 4),
+                    color: colors[this.nextAntId % colors.length],
+                    id: this.nextAntId
+                };
+                this.ants.push(newAnt);
+                this.nextAntId++;
+                this.updateInfo();
+                this.draw();
+            }
+            
+            clearAnts() {
+                this.ants = [
+                    {
+                        x: Math.floor(this.width / 2),
+                        y: Math.floor(this.height / 2),
+                        direction: 0,
+                        color: '#ff0000',
+                        id: 0
+                    }
+                ];
+                this.nextAntId = 1;
+                this.updateInfo();
+                this.draw();
+            }
+            
+            step() {
+                if (!this.grid || !this.ants || this.ants.length === 0) return;
+                
+                this.ants.forEach(ant => {
+                    if (ant.y >= this.height || ant.x >= this.width || ant.y < 0 || ant.x < 0) {
+                        return;
+                    }
+                    
+                    const currentCell = this.grid[ant.y][ant.x];
+                    
+                    if (currentCell === 0) {
+                        // 黒いセルの場合: 右に90度回転
+                        ant.direction = (ant.direction + 1) % 4;
+                        this.grid[ant.y][ant.x] = 1;
+                    } else {
+                        // 白いセルの場合: 左に90度回転
+                        ant.direction = (ant.direction + 3) % 4;
+                        this.grid[ant.y][ant.x] = 0;
+                    }
+                    
+                    // アリを前進させる
+                    switch (ant.direction) {
+                        case 0: // 北
+                            ant.y = (ant.y - 1 + this.height) % this.height;
+                            break;
+                        case 1: // 東
+                            ant.x = (ant.x + 1) % this.width;
+                            break;
+                        case 2: // 南
+                            ant.y = (ant.y + 1) % this.height;
+                            break;
+                        case 3: // 西
+                            ant.x = (ant.x - 1 + this.width) % this.width;
+                            break;
+                    }
+                });
+                
+                this.steps++;
+                this.updateInfo();
+            }
+            
+            draw() {
+                this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+                
+                // グリッドを描画
+                for (let y = 0; y < this.height; y++) {
+                    for (let x = 0; x < this.width; x++) {
+                        if (this.grid[y][x] === 1) {
+                            this.ctx.fillStyle = '#ffffff';
+                            this.ctx.fillRect(x * this.cellSize, y * this.cellSize, this.cellSize, this.cellSize);
+                        }
+                    }
+                }
+                
+                // アリを描画
+                if (this.ants) {
+                    this.ants.forEach(ant => {
+                        this.ctx.fillStyle = ant.color;
+                        this.ctx.fillRect(ant.x * this.cellSize, ant.y * this.cellSize, this.cellSize, this.cellSize);
+                    });
+                }
+            }
+            
+            updateInfo() {
+                if (!this.ants) return;
+                
+                document.getElementById('step-count').textContent = this.steps;
+                document.getElementById('ant-count').textContent = this.ants.length;
+                
+                const positionsHtml = this.ants.map(ant => 
+                    `<div style="color: ${ant.color};">アリ${ant.id}: (${ant.x}, ${ant.y})</div>`
+                ).join('');
+                document.getElementById('ant-positions').innerHTML = positionsHtml;
+            }
+            
+            animate() {
+                if (!this.isRunning) return;
+                
+                for (let i = 0; i < 10; i++) {
+                    this.step();
+                }
+                this.draw();
+                
+                this.animationId = requestAnimationFrame(() => this.animate());
+            }
+            
+            start() {
+                this.isRunning = true;
+                this.animate();
+            }
+            
+            pause() {
+                this.isRunning = false;
+                if (this.animationId) {
+                    cancelAnimationFrame(this.animationId);
+                }
+            }
+            
+            toggle() {
+                if (this.isRunning) {
+                    this.pause();
+                } else {
+                    this.start();
+                }
+            }
+        }
+        
+        let ant;
+        
+        function initAnt() {
+            ant = new LangtonsAnt('canvas');
+        }
+        
+        function toggleSimulation() {
+            if (ant && ant.toggle) {
+                ant.toggle();
+                const btn = document.querySelector('.btn');
+                btn.textContent = ant.isRunning ? '停止' : '実行';
+            }
+        }
+        
+        function resetSimulation() {
+            if (ant && ant.pause && ant.reset && ant.draw) {
+                ant.pause();
+                ant.reset();
+                ant.draw();
+                document.querySelector('.btn').textContent = '実行';
+            }
+        }
+        
+        function stepSimulation() {
+            if (ant && ant.pause && ant.step && ant.draw) {
+                ant.pause();
+                ant.step();
+                ant.draw();
+                document.querySelector('.btn').textContent = '実行';
+            }
+        }
+        
+        function addAnt() {
+            if (ant && ant.addAnt) {
+                ant.addAnt();
+            }
+        }
+        
+        function clearAnts() {
+            if (ant && ant.clearAnts) {
+                ant.clearAnts();
+            }
+        }
+        
+        // 初期化
+        window.onload = initAnt;
+    </script>
+</body>
+</html>
